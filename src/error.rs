@@ -88,6 +88,10 @@ pub type BoxSendError = SendError<Box<dyn any::Any + Send>, Box<dyn any::Any + S
 /// Error that can occur when sending a message to an actor.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum SendError<M = (), E = Infallible> {
     /// The actor isn't running.
     ActorNotRunning(M),
@@ -681,6 +685,10 @@ impl<'de> Deserialize<'de> for PanicError {
 /// stopping the actor.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub enum PanicReason {
     /// A message handler panicked during execution.
     ///
@@ -824,14 +832,44 @@ impl Hash for Infallible {
     }
 }
 
-#[cfg(all(feature = "remote", not(feature = "serde-codec")))]
+// Manual rkyv impls for Infallible (empty enum — derives fail on zero-variant enums).
+#[cfg(feature = "rkyv")]
+// SAFETY: Infallible is an uninhabitable type — no value can ever exist,
+// so the Portable contract (safe to memcpy) is trivially satisfied.
+unsafe impl rkyv::Portable for Infallible {}
+
+#[cfg(feature = "rkyv")]
+impl rkyv::Archive for Infallible {
+    type Archived = Self;
+    type Resolver = ();
+
+    fn resolve(&self, _resolver: Self::Resolver, _out: rkyv::Place<Self::Archived>) {
+        match *self {}
+    }
+}
+
+#[cfg(feature = "rkyv")]
+impl<S: rkyv::rancor::Fallible + ?Sized> rkyv::Serialize<S> for Infallible {
+    fn serialize(&self, _serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        match *self {}
+    }
+}
+
+#[cfg(feature = "rkyv")]
+impl<D: rkyv::rancor::Fallible + ?Sized> rkyv::Deserialize<Infallible, D> for Infallible {
+    fn deserialize(&self, _deserializer: &mut D) -> Result<Infallible, D::Error> {
+        match *self {}
+    }
+}
+
+#[cfg(all(feature = "remote", not(feature = "serde-codec"), not(feature = "rkyv-codec")))]
 impl crate::remote::codec::RemoteEncode for Infallible {
     fn remote_encode(&self) -> Result<Vec<u8>, crate::remote::codec::RemoteCodecError> {
         match *self {}
     }
 }
 
-#[cfg(all(feature = "remote", not(feature = "serde-codec")))]
+#[cfg(all(feature = "remote", not(feature = "serde-codec"), not(feature = "rkyv-codec")))]
 impl crate::remote::codec::RemoteDecode for Infallible {
     fn remote_decode(_bytes: &[u8]) -> Result<Self, crate::remote::codec::RemoteCodecError> {
         Err(crate::remote::codec::RemoteCodecError(
